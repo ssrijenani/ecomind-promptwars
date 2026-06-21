@@ -2,24 +2,27 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { footprintInputSchema } = require('../utils/validation');
 const { calculateFootprint } = require('../services/footprintService');
-const { generateTips } = require('../services/aiInsightsService');
 const { requireAuth } = require('../middleware/requireAuth');
 const { supabase } = require('../services/supabaseClient');
 
 const router = express.Router();
 
-// The AI call is the most expensive/abusable endpoint, so it gets a tighter
-// rate limit than the rest of the API to prevent cost abuse and basic DoS.
+// Rate-limited to prevent basic abuse/DoS even though this endpoint is
+// now just CPU-bound calculation with no external AI call.
 const calculateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 20,
   message: { error: 'Too many requests. Please wait a moment and try again.' },
 });
 
 /**
  * POST /api/footprint/calculate
- * Calculates a footprint breakdown and AI tips from questionnaire input.
+ * Calculates a footprint breakdown from questionnaire input.
  * Does NOT save anything -- this is a preview step before the user saves.
+ *
+ * Note: personalized AI tips are generated separately, client-side, via
+ * Puter.js (see frontend/src/lib/aiTips.js) so no backend API key or
+ * billing is required for the AI feature.
  */
 router.post('/calculate', calculateLimiter, requireAuth, async (req, res) => {
   const parseResult = footprintInputSchema.safeParse(req.body);
@@ -35,9 +38,7 @@ router.post('/calculate', calculateLimiter, requireAuth, async (req, res) => {
 
   try {
     const { breakdown, totalMonthlyKgCo2, comparison } = calculateFootprint(input);
-    const tips = await generateTips(breakdown, input);
-
-    res.json({ breakdown, totalMonthlyKgCo2, comparison, tips });
+    res.json({ breakdown, totalMonthlyKgCo2, comparison });
   } catch (err) {
     console.error('Error calculating footprint:', err.message);
     res.status(500).json({ error: 'Something went wrong while calculating your footprint.' });

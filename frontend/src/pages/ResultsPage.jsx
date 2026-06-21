@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   PieChart,
@@ -9,6 +9,7 @@ import {
   Legend,
 } from 'recharts';
 import { saveFootprint } from '../lib/api';
+import { generateTips } from '../lib/aiTips';
 
 const CATEGORY_LABELS = {
   commute: 'Commute',
@@ -30,8 +31,30 @@ export default function ResultsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [tips, setTips] = useState(null);
+  const [tipsLoading, setTipsLoading] = useState(true);
 
   const { result, input } = location.state || {};
+
+  useEffect(() => {
+    if (!result) return;
+
+    let isMounted = true;
+    setTipsLoading(true);
+
+    generateTips(result.breakdown, input)
+      .then((generatedTips) => {
+        if (isMounted) setTips(generatedTips);
+      })
+      .finally(() => {
+        if (isMounted) setTipsLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!result) {
     return (
@@ -46,7 +69,7 @@ export default function ResultsPage() {
     );
   }
 
-  const { breakdown, totalMonthlyKgCo2, comparison, tips } = result;
+  const { breakdown, totalMonthlyKgCo2, comparison } = result;
 
   const chartData = Object.entries(breakdown)
     .filter(([, value]) => value > 0)
@@ -111,13 +134,21 @@ export default function ResultsPage() {
 
         <section style={styles.tipsSection}>
           <h2 style={styles.tipsHeading}>Personalized ways to reduce this</h2>
-          <ul style={styles.tipsList}>
-            {tips.map((tip, i) => (
-              <li key={i} style={styles.tipItem}>
-                {tip}
-              </li>
-            ))}
-          </ul>
+          {tipsLoading && (
+            <p style={styles.tipsLoading}>
+              Asking your AI coach for personalized tips… (you may see a one-time sign-in
+              prompt — it's free, just a quick account)
+            </p>
+          )}
+          {!tipsLoading && tips && (
+            <ul style={styles.tipsList}>
+              {tips.map((tip, i) => (
+                <li key={i} style={styles.tipItem}>
+                  {tip}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {error && (
@@ -197,6 +228,11 @@ const styles = {
   tipsHeading: {
     fontSize: '1.25rem',
     marginBottom: 'var(--space-4)',
+  },
+  tipsLoading: {
+    fontSize: '0.9rem',
+    color: 'var(--color-ink-soft)',
+    fontStyle: 'italic',
   },
   tipsList: {
     listStyle: 'none',

@@ -13,7 +13,7 @@ The product follows a simple loop: **answer → see → understand → act → t
 1. **Answer** — A short questionnaire covers the four categories that dominate an individual's footprint: commute, diet, home electricity, and air travel.
 2. **See** — The backend calculates an estimated monthly footprint in kg CO₂, broken down by category, using published emission factors (see [Methodology](#methodology--assumptions) below). Nothing here is a guess dressed up as data — every factor is sourced.
 3. **Understand** — The result is shown against an estimated India per-capita average, so the number means something instead of floating in the abstract.
-4. **Act** — This is where the "smart, dynamic assistant" requirement lives: the backend sends the user's specific breakdown to Claude (Anthropic API), which returns four tips that reference the user's *actual* numbers (their commute distance, their diet type, their electricity usage) rather than generic eco-advice. The system prompt explicitly requires this so the tips feel personalized, not templated.
+4. **Act** — This is where the "smart, dynamic assistant" requirement lives: once the footprint is calculated, the frontend sends the user's specific breakdown to Claude (via [Puter.js](https://docs.puter.com), a keyless client-side AI access layer), which returns four tips that reference the user's *actual* numbers (their commute distance, their diet type, their electricity usage) rather than generic eco-advice. The system prompt explicitly requires this so the tips feel personalized, not templated.
 5. **Track** — Snapshots are saved to Supabase (scoped to the logged-in user via Row Level Security) so a returning user can see their trend over time, not just a one-off number.
 
 ### Why this scope, and what's deliberately left out
@@ -24,18 +24,23 @@ Given the build window, the product is intentionally narrow rather than broad: o
 
 ```
 ┌─────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│   Frontend   │ ───▶ │     Backend       │ ───▶ │   Claude (API)   │
-│ React + Vite │ ◀─── │  Node + Express   │ ◀─── │  personalized    │
-│              │      │                   │      │  tips            │
+│   Frontend   │ ───▶ │     Backend       │      │  Puter.js        │
+│ React + Vite │ ◀─── │  Node + Express   │      │  (client-side,   │
+│  + Puter.js  │ ──────────────────────────────▶ │  keyless Claude  │
+│  (AI tips)   │ ◀────────────────────────────── │  access)         │
 └──────┬───────┘      └─────────┬─────────┘      └─────────────────┘
        │                        │
        │ Supabase Auth          │ Supabase (Postgres)
        └────────────────────────┴── footprint_snapshots (per-user, RLS-protected)
 ```
 
-- **Frontend** (`/frontend`): React + Vite. Handles auth UI, the questionnaire, results visualization (Recharts), and history/trend view.
-- **Backend** (`/backend`): Node + Express. Validates input (Zod), computes the footprint (pure, fully unit-tested functions), calls Claude for personalized tips, and persists snapshots to Supabase using the authenticated user's ID.
+- **Frontend** (`/frontend`): React + Vite. Handles auth UI, the questionnaire, results visualization (Recharts), AI tips (via Puter.js, calling Claude directly from the browser with no API key), and history/trend view.
+- **Backend** (`/backend`): Node + Express. Validates input (Zod) and computes the footprint (pure, fully unit-tested functions), then persists snapshots to Supabase using the authenticated user's ID.
 - **Database/Auth** (Supabase): Email/password auth; a single `footprint_snapshots` table with Row Level Security so users can only ever read or write their own data.
+
+### Why Puter.js instead of a backend Anthropic API call
+
+The AI tips feature calls Claude through [Puter.js](https://docs.puter.com) directly from the frontend, rather than through a backend endpoint with an Anthropic API key. Puter.js uses a "User-Pays" model: each signed-in Puter user covers their own AI usage, so no API key, billing setup, or server-side AI credentials are required on our end. The trade-off is a one-time, free sign-in prompt the first time a user requests tips — there is no cost and no card required. The footprint calculation itself (the actual carbon math) still happens on the backend, fully validated and unit-tested; only the AI-generated tips are client-side.
 
 ## Methodology & assumptions
 
@@ -53,14 +58,14 @@ All emission factors are documented with their source directly in [`backend/src/
 - These are estimates for personal awareness, **not** formal carbon accounting, offset calculations, or regulatory reporting.
 - Flight emissions are annualized (divided by 12) so a single yearly flight doesn't artificially spike one month's number.
 - Commute and diet factors assume average occupancy/portion sizes; we did not attempt granular vehicle-model or food-quantity precision, since the goal is directional awareness, not lab-grade accuracy.
-- If the Claude API call fails for any reason (rate limit, network issue), the backend falls back to safe, still-personalized generic tips based on the user's largest emission category, so the product never breaks.
+- If the AI call fails for any reason (Puter sign-in declined, network issue, popup blocked), the frontend falls back to safe, still-personalized generic tips based on the user's largest emission category, so the product never breaks.
 
 ## Tech stack
 
-- **Frontend:** React, Vite, React Router, Recharts, Supabase JS client
-- **Backend:** Node.js, Express, Zod (validation), Helmet (security headers), express-rate-limit, Supabase JS client (service role), Anthropic SDK
+- **Frontend:** React, Vite, React Router, Recharts, Supabase JS client, Puter.js (client-side, keyless Claude access)
+- **Backend:** Node.js, Express, Zod (validation), Helmet (security headers), express-rate-limit, Supabase JS client (service role)
 - **Database/Auth:** Supabase (Postgres + Auth + Row Level Security)
-- **AI:** Claude (Anthropic API), `claude-sonnet-4-6`
+- **AI:** Claude (via Puter.js), `claude-sonnet-4-6`
 - **Testing:** Jest + Supertest (backend), Vitest + React Testing Library (frontend)
 
 ## Running this project locally
@@ -73,7 +78,7 @@ All emission factors are documented with their source directly in [`backend/src/
 ### 2. Backend
 ```bash
 cd backend
-cp .env.example .env   # fill in SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY
+cp .env.example .env   # fill in SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 npm install
 npm run dev            # starts on http://localhost:5000
 ```
@@ -91,6 +96,8 @@ npm install
 npm run dev             # starts on http://localhost:5173
 ```
 
+No Anthropic API key is needed — AI tips run through Puter.js directly in the browser. The first time tips are requested, a free Puter sign-in prompt may appear.
+
 Run frontend tests:
 ```bash
 npm test
@@ -98,11 +105,11 @@ npm test
 
 ## Security notes
 
-- The Anthropic API key and Supabase service role key live only on the backend; the frontend never sees them.
+- The Supabase service role key lives only on the backend; the frontend only ever uses the restricted anon key.
 - All API endpoints (except `/api/health`) require a valid Supabase session token, verified server-side on every request.
 - Input is validated server-side with an allow-list/range schema (Zod) before touching calculation or database logic.
 - Supabase Row Level Security ensures a user can only ever read or write their own snapshots, even if the table were ever queried directly with a client-side key.
-- The AI-tips endpoint is rate-limited per IP to reduce abuse and cost exposure.
+- AI tips run through Puter.js's own sign-in/auth model; no Anthropic API key is stored or transmitted by this app at all.
 
 ## Accessibility notes
 
