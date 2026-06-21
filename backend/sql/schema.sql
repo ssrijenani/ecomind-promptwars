@@ -1,5 +1,4 @@
--- Run this in your Supabase project's SQL Editor (Dashboard -> SQL Editor -> New query)
--- before starting the backend.
+
 
 create table if not exists footprint_snapshots (
   id uuid primary key default gen_random_uuid(),
