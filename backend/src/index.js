@@ -1,4 +1,12 @@
-require('dotenv').config();
+// On Vercel, environment variables come from the dashboard, not a .env file
+// -- there is no .env file in the deployed environment. dotenv.config()
+// should simply find nothing and continue, but we wrap it defensively so a
+// missing file can never crash the whole function.
+try {
+  require('dotenv').config();
+} catch (err) {
+  console.warn('dotenv config skipped:', err.message);
+}
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
